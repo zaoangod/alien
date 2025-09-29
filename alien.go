@@ -246,7 +246,6 @@ func (parameter Parameter) Load(source string) {
     }
 }
 
-// Get returns value associated with key.
 func (parameter Parameter) Get(key string) string {
     return parameter[key]
 }
