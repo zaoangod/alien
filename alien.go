@@ -454,12 +454,12 @@ func (mux *Mux) AddRoute(method string, pattern string, handler RouteHandler) er
 // It returns a boolean value indicating whether the Route is found or not, along with an error if any.
 func (mux *Mux) HasRoute(path, method string) (bool, error) {
     findRoute := func(method string) (bool, error) {
-        _, err := mux.find(method, path)
-        if err == nil {
+        _, exception := mux.find(method, path)
+        if exception == nil {
             return true, nil
         }
-        if !errors.Is(err, ErrorRouteNotFound) {
-            return false, err
+        if !errors.Is(exception, ErrorRouteNotFound) {
+            return false, exception
         }
         return false, nil
     }
@@ -480,18 +480,18 @@ func (mux *Mux) NotFoundHandler(handler http.Handler) {
 }
 
 // ServeHTTP implements http.Handler interface
-func (mux *Mux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-    p := path.Clean(r.URL.Path)
-    h, err := mux.find(r.Method, p)
-    if err != nil {
-        mux.notFound.ServeHTTP(w, r)
+func (mux *Mux) ServeHTTP(response http.ResponseWriter, request *http.Request) {
+    url := path.Clean(request.URL.Path)
+    route, exception := mux.find(request.Method, url)
+    if exception != nil {
+        mux.notFound.ServeHTTP(response, request)
         return
     }
-    params, _ := ParseParameter(p, h.path) // check if there is any url params
-    if params != "" {
-        r.Header.Set(headerName, params)
+    parameter, _ := ParseParameter(url, route.path)
+    if parameter != "" {
+        request.Header.Set(headerName, parameter)
     }
-    h.ServeHTTP(w, r)
+    route.ServeHTTP(response, request)
 }
 
 // Group creates a path prefix group for pattern, all routes registered using
