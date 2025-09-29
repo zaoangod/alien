@@ -4,11 +4,14 @@ import "path"
 import "sync"
 import "errors"
 import "strings"
-import "net/http"
+import (
+    `net/http`
+    `fmt`
+)
 
 var (
     eof              = rune(0)
-    errRouteNotFound = errors.New("route not found")
+    errRouteNotFound = errors.New("Route not found")
     errBadPattern    = errors.New("bad pattern")
     errUnknownMethod = errors.New("unknown http method")
     headerName       = "_alien"
@@ -25,70 +28,69 @@ var (
     }
 )
 
-type nodeType int
+type Classify int
 
 const (
-    nodeRoot nodeType = iota
+    NodeRoot Classify = iota
     nodeParam
     nodeNormal
     nodeCatchAll
     nodeEnd
 )
 
-type node struct {
+type Node struct {
     key      rune
-    typ      nodeType
-    mu       sync.RWMutex
-    value    *route
-    children []*node
+    value    *Route
+    mutex    sync.RWMutex
+    classify Classify
+    children []*Node
 }
 
-func (n *node) branch(key rune, val *route, typ ...nodeType) *node {
-    child := &node{
+func (node *Node) branch(key rune, value *Route, classify ...Classify) *Node {
+    data := &Node{
         key:   key,
-        value: val,
+        value: value,
     }
-    if len(typ) > 0 {
-        child.typ = typ[0]
+    if len(classify) > 0 {
+        data.classify = classify[0]
     }
-    n.children = append(n.children, child)
-    return child
+    node.children = append(node.children, data)
+    return data
 }
 
-func (n *node) findChild(key rune) *node {
-    for _, v := range n.children {
-        if v.key == key {
-            return v
+func (node *Node) findChild(key rune) *Node {
+    for _, value := range node.children {
+        if value.key == key {
+            return value
         }
     }
     return nil
 }
 
-func (n *node) insert(pattern string, val *route) error {
-    n.mu.Lock()
-    defer n.mu.Unlock()
-    if n.typ != nodeRoot {
-        return errors.New("inserting on a non root node")
+func (node *Node) insert(pattern string, value *Route) error {
+    node.mutex.Lock()
+    defer node.mutex.Unlock()
+    if node.classify != NodeRoot {
+        return fmt.Errorf("insert on non root node")
     }
-    var level *node
-    var child *node
-
     if pattern == "" {
-        return errors.New("empty pattern is not supported")
+        return errors.New("empty pattern is not support")
     }
+    // 47 -> /
+    if pattern[0] != 47 {
+        return errors.New("path must start with '/'")
+    }
+    var level *Node
+    var child *Node
 
-    for k, ch := range pattern {
-        if k == 0 {
-            if ch != '/' {
-                return errors.New("path must start with slash ")
-            }
-            level = n
+    for index, character := range pattern {
+        if index == 0 {
+            level = node
         }
-
-        child = level.findChild(ch)
-        switch level.typ {
+        child = level.findChild(character)
+        switch level.classify {
         case nodeParam:
-            if k < len(pattern) && ch != '/' {
+            if index < len(pattern) && character != '/' {
                 continue
             }
         }
@@ -96,30 +98,30 @@ func (n *node) insert(pattern string, val *route) error {
             level = child
             continue
         }
-        switch ch {
+        switch character {
         case ':':
-            level = level.branch(ch, nil, nodeParam)
+            level = level.branch(character, nil, nodeParam)
         case '*':
-            level = level.branch(ch, nil, nodeCatchAll)
+            level = level.branch(character, nil, nodeCatchAll)
         default:
-            level = level.branch(ch, nil, nodeNormal)
+            level = level.branch(character, nil, nodeNormal)
         }
     }
-    level.branch(eof, val, nodeEnd)
+    level.branch(eof, value, nodeEnd)
     return nil
 }
 
-func (n *node) find(path string) (*route, error) {
-    n.mu.RLock()
-    defer n.mu.RUnlock()
-    if n.typ != nodeRoot {
-        return nil, errors.New("non node search")
+func (node *Node) find(path string) (*Route, error) {
+    node.mutex.RLock()
+    defer node.mutex.RUnlock()
+    if node.classify != NodeRoot {
+        return nil, errors.New("non Node search")
     }
-    var level *node
+    var level *Node
     var isParam bool
     for k, ch := range path {
         if k == 0 {
-            level = n
+            level = node
         }
         c := level.findChild(ch)
         if isParam {
@@ -160,36 +162,36 @@ func (n *node) find(path string) (*route, error) {
     return nil, errRouteNotFound
 }
 
-type route struct {
+type Middleware = func(http.Handler) http.Handler
+
+type RouteHandler = func(http.ResponseWriter, *http.Request)
+
+type Route struct {
     path       string
-    middleware []func(http.Handler) http.Handler
-    handler    func(http.ResponseWriter, *http.Request)
+    handler    RouteHandler
+    middleware []Middleware
 }
 
-func (r *route) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-    var base http.Handler
-    if base == nil {
-        base = http.HandlerFunc(r.handler)
+func (route *Route) ServeHTTP(response http.ResponseWriter, request *http.Request) {
+    var base http.Handler = http.HandlerFunc(route.handler)
+    for _, middleware := range route.middleware {
+        base = middleware(base)
     }
-    for _, m := range r.middleware {
-        base = m(base)
-    }
-    base.ServeHTTP(w, req)
+    base.ServeHTTP(response, request)
 }
 
-// ParseParams parses params found in mateched from pattern. There are two kinds
-// of params, one to capture a segment which starts with : and a nother to
-// capture everything( a.k.a catch all) whis starts with *.
+// ParseParameter parses params found in mateched from pattern.
+// There are two kinds of params, one to capture a segment which starts with : and a nother to capture everything( a.k.a catch all) whis starts with *.
 //
 // For instance
 //   pattern:="/hello/:name"
 //   matched:="/hello/world"
-// Will result into name:world. this function captures the named params and
-// theri coreesponding values, returning them in a comma separated  string of a
-// key:value nature. please see the tests for more details.
-func ParseParams(matched, pattern string) (result string, err error) {
+// Will result into name:world.
+// this function captures the named params and theri coreesponding values, returning them in a comma separated  string of a key:value nature.
+// please see the tests for more details.
+func ParseParameter(match, pattern string) (result string, err error) {
     if strings.Contains(pattern, ":") || strings.Contains(pattern, "*") {
-        p1 := strings.Split(matched, "/")
+        p1 := strings.Split(match, "/")
         p2 := strings.Split(pattern, "/")
         s1 := len(p1)
         s2 := len(p2)
@@ -228,32 +230,32 @@ func ParseParams(matched, pattern string) (result string, err error) {
     return
 }
 
-// Params stores route params.
-type Params map[string]string
+// Parameter 存储路由参数
+type Parameter map[string]string
 
-// Load loads params found in src into p.
-func (p Params) Load(src string) {
-    s := strings.Split(src, ",")
-    var vars []string
-    for _, v := range s {
-        vars = strings.Split(v, ":")
-        if len(vars) != 2 {
+// Load load parameter.
+func (parameter Parameter) Load(source string) {
+    list := strings.Split(source, ",")
+    var variable []string
+    for _, value := range list {
+        variable = strings.Split(value, ":")
+        if len(variable) != 2 {
             continue
         }
-        p[vars[0]] = vars[1]
+        parameter[variable[0]] = variable[1]
     }
 }
 
 // Get returns value associated with key.
-func (p Params) Get(key string) string {
-    return p[key]
+func (parameter Parameter) Get(key string) string {
+    return parameter[key]
 }
 
-// GetParams returrns route params stored in r.
-func GetParams(r *http.Request) Params {
+// GetParams returrns Route params stored in r.
+func GetParams(r *http.Request) Parameter {
     c := r.Header.Get(headerName)
     if c != "" {
-        p := make(Params)
+        p := make(Parameter)
         p.Load(c)
         return p
     }
@@ -261,66 +263,66 @@ func GetParams(r *http.Request) Params {
 }
 
 type router struct {
-    get, post, patch, put, head     *node
-    connect, options, trace, delete *node
+    get, post, patch, put, head     *Node
+    connect, options, trace, delete *Node
 }
 
 func (r *router) addRoute(method, path string, h func(http.ResponseWriter, *http.Request), wares ...func(http.Handler) http.Handler) error {
-    newRoute := &route{path: path, handler: h}
+    newRoute := &Route{path: path, handler: h}
     if len(wares) > 0 {
         newRoute.middleware = append(newRoute.middleware, wares...)
     }
     switch method {
     case "GET":
         if r.get == nil {
-            r.get = &node{typ: nodeRoot}
+            r.get = &Node{classify: NodeRoot}
         }
         return r.get.insert(path, newRoute)
     case "POST":
         if r.post == nil {
-            r.post = &node{typ: nodeRoot}
+            r.post = &Node{classify: NodeRoot}
         }
         return r.post.insert(path, newRoute)
     case "PUT":
         if r.put == nil {
-            r.put = &node{typ: nodeRoot}
+            r.put = &Node{classify: NodeRoot}
         }
         return r.put.insert(path, newRoute)
     case "PATCH":
         if r.patch == nil {
-            r.patch = &node{typ: nodeRoot}
+            r.patch = &Node{classify: NodeRoot}
         }
         return r.patch.insert(path, newRoute)
     case "HEAD":
         if r.head == nil {
-            r.head = &node{typ: nodeRoot}
+            r.head = &Node{classify: NodeRoot}
         }
         return r.head.insert(path, newRoute)
     case "CONNECT":
         if r.connect == nil {
-            r.connect = &node{typ: nodeRoot}
+            r.connect = &Node{classify: NodeRoot}
         }
         return r.connect.insert(path, newRoute)
     case "OPTIONS":
         if r.options == nil {
-            r.options = &node{typ: nodeRoot}
+            r.options = &Node{classify: NodeRoot}
         }
         return r.options.insert(path, newRoute)
     case "TRACE":
         if r.trace == nil {
-            r.trace = &node{typ: nodeRoot}
+            r.trace = &Node{classify: NodeRoot}
         }
         return r.trace.insert(path, newRoute)
     case "DELETE":
         if r.delete == nil {
-            r.delete = &node{typ: nodeRoot}
+            r.delete = &Node{classify: NodeRoot}
         }
         return r.delete.insert(path, newRoute)
     }
     return errUnknownMethod
 }
 
-func (r *router) find(method, path string) (*route, error) {
+func (r *router) find(method, path string) (*Route, error) {
     switch method {
     case "GET":
         if r.get != nil {
@@ -384,13 +386,12 @@ func (r *router) find(method, path string) (*route, error) {
 //   world/tanzania
 //   world/afica/tanzania.png
 //
-// If you dont specify a name in a catch all route, then the default name "catch"
-// will be ussed.
+// If you dont specify a name in a catch all Route, then the default name "catch" will be used.
 type Mux struct {
-    prefix     string
-    middleware []func(http.Handler) http.Handler
-    notFound   http.Handler
     *router
+    prefix     string
+    notFound   http.Handler
+    middleware []func(http.Handler) http.Handler
 }
 
 // New returns a new *Mux instance with default handler for mismatched routes.
@@ -405,65 +406,65 @@ func New() *Mux {
 
 // AddRoute registers h with pattern and method. If there is a path prefix
 // created via the Group method) it will be set.
-func (m *Mux) AddRoute(method, pattern string, h func(http.ResponseWriter, *http.Request)) error {
-    if m.prefix != "" {
-        pattern = path.Join(m.prefix, pattern)
+func (mux *Mux) AddRoute(method, pattern string, h func(http.ResponseWriter, *http.Request)) error {
+    if mux.prefix != "" {
+        pattern = path.Join(mux.prefix, pattern)
     }
-    return m.addRoute(method, pattern, h, m.middleware...)
+    return mux.addRoute(method, pattern, h, mux.middleware...)
 }
 
 // Get registers h with pattern and method GET.
-func (m *Mux) Get(pattern string, h func(http.ResponseWriter, *http.Request)) error {
-    return m.AddRoute("GET", pattern, h)
+func (mux *Mux) Get(pattern string, h func(http.ResponseWriter, *http.Request)) error {
+    return mux.AddRoute("GET", pattern, h)
 }
 
 // Put registers h with pattern and method PUT.
-func (m *Mux) Put(path string, h func(http.ResponseWriter, *http.Request)) error {
-    return m.AddRoute("PUT", path, h)
+func (mux *Mux) Put(path string, h func(http.ResponseWriter, *http.Request)) error {
+    return mux.AddRoute("PUT", path, h)
 }
 
 // Post registers h with pattern and method POST.
-func (m *Mux) Post(path string, h func(http.ResponseWriter, *http.Request)) error {
-    return m.AddRoute("POST", path, h)
+func (mux *Mux) Post(path string, h func(http.ResponseWriter, *http.Request)) error {
+    return mux.AddRoute("POST", path, h)
 }
 
 // Patch registers h with pattern and method PATCH.
-func (m *Mux) Patch(path string, h func(http.ResponseWriter, *http.Request)) error {
-    return m.AddRoute("PATCH", path, h)
+func (mux *Mux) Patch(path string, h func(http.ResponseWriter, *http.Request)) error {
+    return mux.AddRoute("PATCH", path, h)
 }
 
 // Head registers h with pattern and method HEAD.
-func (m *Mux) Head(path string, h func(http.ResponseWriter, *http.Request)) error {
-    return m.AddRoute("HEAD", path, h)
+func (mux *Mux) Head(path string, h func(http.ResponseWriter, *http.Request)) error {
+    return mux.AddRoute("HEAD", path, h)
 }
 
 // Options registers h with pattern and method OPTIONS.
-func (m *Mux) Options(path string, h func(http.ResponseWriter, *http.Request)) error {
-    return m.AddRoute("OPTIONS", path, h)
+func (mux *Mux) Options(path string, h func(http.ResponseWriter, *http.Request)) error {
+    return mux.AddRoute("OPTIONS", path, h)
 }
 
 // Connect  registers h with pattern and method CONNECT.
-func (m *Mux) Connect(path string, h func(http.ResponseWriter, *http.Request)) error {
-    return m.AddRoute("CONNECT", path, h)
+func (mux *Mux) Connect(path string, h func(http.ResponseWriter, *http.Request)) error {
+    return mux.AddRoute("CONNECT", path, h)
 }
 
 // Trace registers h with pattern and method TRACE.
-func (m *Mux) Trace(path string, h func(http.ResponseWriter, *http.Request)) error {
-    return m.AddRoute("TRACE", path, h)
+func (mux *Mux) Trace(path string, h func(http.ResponseWriter, *http.Request)) error {
+    return mux.AddRoute("TRACE", path, h)
 }
 
 // Delete registers h with pattern and method DELETE.
-func (m *Mux) Delete(path string, h func(http.ResponseWriter, *http.Request)) error {
-    return m.AddRoute("DELETE", path, h)
+func (mux *Mux) Delete(path string, h func(http.ResponseWriter, *http.Request)) error {
+    return mux.AddRoute("DELETE", path, h)
 }
 
-// ContainsRoute checks if a route is present in the Mux.
+// ContainsRoute checks if a Route is present in the Mux.
 // It takes two arguments: path (string) and method (string).
-// If method is empty, it will look for the route in all HTTP methods.
-// It returns a boolean value indicating whether the route is found or not, along with an error if any.
-func (m *Mux) ContainsRoute(path, method string) (bool, error) {
+// If method is empty, it will look for the Route in all HTTP methods.
+// It returns a boolean value indicating whether the Route is found or not, along with an error if any.
+func (mux *Mux) ContainsRoute(path, method string) (bool, error) {
     findRoute := func(method string) (bool, error) {
-        _, err := m.find(method, path)
+        _, err := mux.find(method, path)
         if err == nil {
             return true, nil
         }
@@ -484,21 +485,19 @@ func (m *Mux) ContainsRoute(path, method string) (bool, error) {
     return false, nil
 }
 
-// NotFoundHandler is executed when the request route is not found.
-func (m *Mux) NotFoundHandler(h http.Handler) {
-    m.notFound = h
+func (mux *Mux) NotFoundHandler(handler http.Handler) {
+    mux.notFound = handler
 }
 
-// ServeHTTP implements http.Handler interface. It muliplexes http requests
-// against registered handlers.
-func (m *Mux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+// ServeHTTP implements http.Handler interface
+func (mux *Mux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
     p := path.Clean(r.URL.Path)
-    h, err := m.find(r.Method, p)
+    h, err := mux.find(r.Method, p)
     if err != nil {
-        m.notFound.ServeHTTP(w, r)
+        mux.notFound.ServeHTTP(w, r)
         return
     }
-    params, _ := ParseParams(p, h.path) // check if there is any url params
+    params, _ := ParseParameter(p, h.path) // check if there is any url params
     if params != "" {
         r.Header.Set(headerName, params)
     }
@@ -513,20 +512,20 @@ func (m *Mux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 //   home.Get("/alone",myHandler)
 // will match
 //   /home/alone
-func (m *Mux) Group(pattern string) *Mux {
+func (mux *Mux) Group(pattern string) *Mux {
     return &Mux{
         prefix:     pattern,
-        router:     m.router,
-        middleware: m.middleware,
-        notFound:   m.notFound,
+        router:     mux.router,
+        middleware: mux.middleware,
+        notFound:   mux.notFound,
     }
 
 }
 
 // Use assigns midlewares to the current *Mux. All routes registered by the *Mux
 // after this call will have the middlewares assigned to them.
-func (m *Mux) Use(middleware ...func(http.Handler) http.Handler) {
+func (mux *Mux) Use(middleware ...func(http.Handler) http.Handler) {
     if len(middleware) > 0 {
-        m.middleware = append(m.middleware, middleware...)
+        mux.middleware = append(mux.middleware, middleware...)
     }
 }
