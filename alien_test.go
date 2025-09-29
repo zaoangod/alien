@@ -207,7 +207,7 @@ func TestMux_ContainsRoute(t *testing.T) {
     }
     for method, register := range registers {
         path := fmt.Sprintf("/%s", method)
-        ok, err := m.ContainsRoute(path, "")
+        ok, err := m.HasRoute(path, "")
         if err != nil {
             t.Error(err)
         }
@@ -218,14 +218,14 @@ func TestMux_ContainsRoute(t *testing.T) {
         if err != nil {
             t.Error(err)
         }
-        ok, err = m.ContainsRoute(path, "")
+        ok, err = m.HasRoute(path, "")
         if err != nil {
             t.Error(err)
         }
         if !ok {
             t.Error("expected true got false")
         }
-        ok, err = m.ContainsRoute(path, method)
+        ok, err = m.HasRoute(path, method)
         if err != nil {
             t.Error(err)
         }

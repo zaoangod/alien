@@ -10,8 +10,9 @@ import (
 )
 
 var (
+    ErrorRouteNotFound = errors.New("route not found")
+
     eof              = rune(0)
-    errRouteNotFound = errors.New("Route not found")
     errBadPattern    = errors.New("bad pattern")
     errUnknownMethod = errors.New("unknown http method")
     headerName       = "_alien"
@@ -145,7 +146,7 @@ func (node *Node) find(path string) (*Route, error) {
             level = c
             continue
         }
-        return nil, errRouteNotFound
+        return nil, ErrorRouteNotFound
     }
     if level != nil {
         end := level.findChild(eof)
@@ -159,7 +160,7 @@ func (node *Node) find(path string) (*Route, error) {
             }
         }
     }
-    return nil, errRouteNotFound
+    return nil, ErrorRouteNotFound
 }
 
 type Middleware = func(http.Handler) http.Handler
@@ -333,44 +334,44 @@ func (router *Router) addRoute(method, path string, handler RouteHandler, middle
 
 func (router *Router) find(method, path string) (*Route, error) {
     switch method {
-    case "GET":
+    case http.MethodGet:
         if router.get != nil {
             return router.get.find(path)
         }
-    case "POST":
-        if router.post != nil {
-            return router.post.find(path)
-        }
-    case "PUT":
+    case http.MethodPut:
         if router.put != nil {
             return router.put.find(path)
         }
-    case "PATCH":
-        if router.patch != nil {
-            return router.patch.find(path)
+    case http.MethodPost:
+        if router.post != nil {
+            return router.post.find(path)
         }
-    case "HEAD":
+    case http.MethodHead:
         if router.head != nil {
             return router.head.find(path)
         }
-    case "CONNECT":
-        if router.connect != nil {
-            return router.connect.find(path)
-        }
-    case "OPTIONS":
-        if router.options != nil {
-            return router.options.find(path)
-        }
-    case "TRACE":
+    case http.MethodTrace:
         if router.trace != nil {
             return router.trace.find(path)
         }
-    case "DELETE":
+    case http.MethodPatch:
+        if router.patch != nil {
+            return router.patch.find(path)
+        }
+    case http.MethodDelete:
         if router.delete != nil {
             return router.delete.find(path)
         }
+    case http.MethodConnect:
+        if router.connect != nil {
+            return router.connect.find(path)
+        }
+    case http.MethodOptions:
+        if router.options != nil {
+            return router.options.find(path)
+        }
     }
-    return nil, errRouteNotFound
+    return nil, ErrorRouteNotFound
 }
 
 // Mux is a http multiplexer that allows matching of http requests to the
@@ -403,81 +404,61 @@ type Mux struct {
     middleware []func(http.Handler) http.Handler
 }
 
-// New returns a new *Mux instance with default handler for mismatched routes.
 func New() *Mux {
-    m := &Mux{}
-    m.Router = &Router{}
-    m.notFound = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        http.Error(w, errRouteNotFound.Error(), http.StatusNotFound)
+    mux := &Mux{}
+    mux.prefix = ""
+    mux.Router = &Router{}
+    mux.notFound = http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+        response.Header().Set("Content-Type", "text/html; charset=UTF-8")
+        response.WriteHeader(http.StatusNotFound)
+        response.Write([]byte("404 - Not Found"))
     })
-    return m
+    return mux
 }
 
-// AddRoute registers h with pattern and method. If there is a path prefix
-// created via the Group method) it will be set.
-func (mux *Mux) AddRoute(method, pattern string, h func(http.ResponseWriter, *http.Request)) error {
-    if mux.prefix != "" {
-        pattern = path.Join(mux.prefix, pattern)
-    }
-    return mux.addRoute(method, pattern, h, mux.middleware...)
+func (mux *Mux) Get(pattern string, handler RouteHandler) error {
+    return mux.AddRoute(http.MethodGet, pattern, handler)
+}
+func (mux *Mux) Put(pattern string, handler RouteHandler) error {
+    return mux.AddRoute(http.MethodPut, pattern, handler)
+}
+func (mux *Mux) Post(pattern string, handler RouteHandler) error {
+    return mux.AddRoute(http.MethodPost, pattern, handler)
+}
+func (mux *Mux) Head(pattern string, handler RouteHandler) error {
+    return mux.AddRoute(http.MethodHead, pattern, handler)
+}
+func (mux *Mux) Patch(pattern string, handler RouteHandler) error {
+    return mux.AddRoute(http.MethodPatch, pattern, handler)
+}
+func (mux *Mux) Trace(pattern string, handler RouteHandler) error {
+    return mux.AddRoute(http.MethodTrace, pattern, handler)
+}
+func (mux *Mux) Delete(pattern string, handler RouteHandler) error {
+    return mux.AddRoute(http.MethodDelete, pattern, handler)
+}
+func (mux *Mux) Options(pattern string, handler RouteHandler) error {
+    return mux.AddRoute(http.MethodOptions, pattern, handler)
+}
+func (mux *Mux) Connect(pattern string, handler RouteHandler) error {
+    return mux.AddRoute(http.MethodConnect, pattern, handler)
+}
+func (mux *Mux) AddRoute(method string, pattern string, handler RouteHandler) error {
+    pattern = path.Join(mux.prefix, pattern)
+    return mux.addRoute(method, pattern, handler, mux.middleware...)
 }
 
-// Get registers h with pattern and method GET.
-func (mux *Mux) Get(pattern string, h func(http.ResponseWriter, *http.Request)) error {
-    return mux.AddRoute("GET", pattern, h)
-}
-
-// Put registers h with pattern and method PUT.
-func (mux *Mux) Put(path string, h func(http.ResponseWriter, *http.Request)) error {
-    return mux.AddRoute("PUT", path, h)
-}
-
-// Post registers h with pattern and method POST.
-func (mux *Mux) Post(path string, h func(http.ResponseWriter, *http.Request)) error {
-    return mux.AddRoute("POST", path, h)
-}
-
-// Patch registers h with pattern and method PATCH.
-func (mux *Mux) Patch(path string, h func(http.ResponseWriter, *http.Request)) error {
-    return mux.AddRoute("PATCH", path, h)
-}
-
-// Head registers h with pattern and method HEAD.
-func (mux *Mux) Head(path string, h func(http.ResponseWriter, *http.Request)) error {
-    return mux.AddRoute("HEAD", path, h)
-}
-
-// Options registers h with pattern and method OPTIONS.
-func (mux *Mux) Options(path string, h func(http.ResponseWriter, *http.Request)) error {
-    return mux.AddRoute("OPTIONS", path, h)
-}
-
-// Connect  registers h with pattern and method CONNECT.
-func (mux *Mux) Connect(path string, h func(http.ResponseWriter, *http.Request)) error {
-    return mux.AddRoute("CONNECT", path, h)
-}
-
-// Trace registers h with pattern and method TRACE.
-func (mux *Mux) Trace(path string, h func(http.ResponseWriter, *http.Request)) error {
-    return mux.AddRoute("TRACE", path, h)
-}
-
-// Delete registers h with pattern and method DELETE.
-func (mux *Mux) Delete(path string, h func(http.ResponseWriter, *http.Request)) error {
-    return mux.AddRoute("DELETE", path, h)
-}
-
-// ContainsRoute checks if a Route is present in the Mux.
+// HasRoute checks if a Route is present in the Mux.
 // It takes two arguments: path (string) and method (string).
 // If method is empty, it will look for the Route in all HTTP methods.
 // It returns a boolean value indicating whether the Route is found or not, along with an error if any.
-func (mux *Mux) ContainsRoute(path, method string) (bool, error) {
+func (mux *Mux) HasRoute(path, method string) (bool, error) {
     findRoute := func(method string) (bool, error) {
         _, err := mux.find(method, path)
         if err == nil {
             return true, nil
         }
-        if !errors.Is(err, errRouteNotFound) {
+        if !errors.Is(err, ErrorRouteNotFound) {
             return false, err
         }
         return false, nil
