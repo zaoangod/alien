@@ -273,98 +273,101 @@ type Router struct {
     options *Node
 }
 
-func (r *Router) addRoute(method, path string, h func(http.ResponseWriter, *http.Request), wares ...func(http.Handler) http.Handler) error {
-    newRoute := &Route{path: path, handler: h}
-    if len(wares) > 0 {
-        newRoute.middleware = append(newRoute.middleware, wares...)
+func (router *Router) addRoute(method, path string, handler RouteHandler, middleware ...Middleware) error {
+    value := &Route{
+        path:    path,
+        handler: handler,
+    }
+    if len(middleware) > 0 {
+        value.middleware = append(value.middleware, middleware...)
     }
     switch method {
-    case "GET":
-        if r.get == nil {
-            r.get = &Node{classify: NodeRoot}
+    case http.MethodGet:
+        if router.get == nil {
+            router.get = &Node{classify: NodeRoot}
         }
-        return r.get.insert(path, newRoute)
-    case "POST":
-        if r.post == nil {
-            r.post = &Node{classify: NodeRoot}
+        return router.get.insert(path, value)
+    case http.MethodPut:
+        if router.put == nil {
+            router.put = &Node{classify: NodeRoot}
         }
-        return r.post.insert(path, newRoute)
-    case "PUT":
-        if r.put == nil {
-            r.put = &Node{classify: NodeRoot}
+        return router.put.insert(path, value)
+    case http.MethodPost:
+        if router.post == nil {
+            router.post = &Node{classify: NodeRoot}
         }
-        return r.put.insert(path, newRoute)
-    case "PATCH":
-        if r.patch == nil {
-            r.patch = &Node{classify: NodeRoot}
+        return router.post.insert(path, value)
+    case http.MethodHead:
+        if router.head == nil {
+            router.head = &Node{classify: NodeRoot}
         }
-        return r.patch.insert(path, newRoute)
-    case "HEAD":
-        if r.head == nil {
-            r.head = &Node{classify: NodeRoot}
+        return router.head.insert(path, value)
+    case http.MethodPatch:
+        if router.patch == nil {
+            router.patch = &Node{classify: NodeRoot}
         }
-        return r.head.insert(path, newRoute)
-    case "CONNECT":
-        if r.connect == nil {
-            r.connect = &Node{classify: NodeRoot}
+        return router.patch.insert(path, value)
+    case http.MethodTrace:
+        if router.trace == nil {
+            router.trace = &Node{classify: NodeRoot}
         }
-        return r.connect.insert(path, newRoute)
-    case "OPTIONS":
-        if r.options == nil {
-            r.options = &Node{classify: NodeRoot}
+        return router.trace.insert(path, value)
+    case http.MethodDelete:
+        if router.delete == nil {
+            router.delete = &Node{classify: NodeRoot}
         }
-        return r.options.insert(path, newRoute)
-    case "TRACE":
-        if r.trace == nil {
-            r.trace = &Node{classify: NodeRoot}
+        return router.delete.insert(path, value)
+    case http.MethodConnect:
+        if router.connect == nil {
+            router.connect = &Node{classify: NodeRoot}
         }
-        return r.trace.insert(path, newRoute)
-    case "DELETE":
-        if r.delete == nil {
-            r.delete = &Node{classify: NodeRoot}
+        return router.connect.insert(path, value)
+    case http.MethodOptions:
+        if router.options == nil {
+            router.options = &Node{classify: NodeRoot}
         }
-        return r.delete.insert(path, newRoute)
+        return router.options.insert(path, value)
     }
-    return errUnknownMethod
+    return errors.New("unknown http method")
 }
 
-func (r *Router) find(method, path string) (*Route, error) {
+func (router *Router) find(method, path string) (*Route, error) {
     switch method {
     case "GET":
-        if r.get != nil {
-            return r.get.find(path)
+        if router.get != nil {
+            return router.get.find(path)
         }
     case "POST":
-        if r.post != nil {
-            return r.post.find(path)
+        if router.post != nil {
+            return router.post.find(path)
         }
     case "PUT":
-        if r.put != nil {
-            return r.put.find(path)
+        if router.put != nil {
+            return router.put.find(path)
         }
     case "PATCH":
-        if r.patch != nil {
-            return r.patch.find(path)
+        if router.patch != nil {
+            return router.patch.find(path)
         }
     case "HEAD":
-        if r.head != nil {
-            return r.head.find(path)
+        if router.head != nil {
+            return router.head.find(path)
         }
     case "CONNECT":
-        if r.connect != nil {
-            return r.connect.find(path)
+        if router.connect != nil {
+            return router.connect.find(path)
         }
     case "OPTIONS":
-        if r.options != nil {
-            return r.options.find(path)
+        if router.options != nil {
+            return router.options.find(path)
         }
     case "TRACE":
-        if r.trace != nil {
-            return r.trace.find(path)
+        if router.trace != nil {
+            return router.trace.find(path)
         }
     case "DELETE":
-        if r.delete != nil {
-            return r.delete.find(path)
+        if router.delete != nil {
+            return router.delete.find(path)
         }
     }
     return nil, errRouteNotFound
