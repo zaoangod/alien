@@ -1,22 +1,20 @@
 package alien
 
+import "fmt"
 import "path"
 import "sync"
 import "errors"
 import "strings"
-import (
-    `net/http`
-    `fmt`
-)
+import "net/http"
+
+type Lock = sync.RWMutex
 
 var (
     ErrorRouteNotFound = errors.New("route not found")
 
-    eof              = rune(0)
-    errBadPattern    = errors.New("bad pattern")
-    errUnknownMethod = errors.New("unknown http method")
-    headerName       = "_alien"
-    AllMethod        = []string{
+    errBadPattern = errors.New("bad pattern")
+    headerName    = "_alien"
+    AllMethod     = []string{
         http.MethodGet,
         http.MethodPut,
         http.MethodPost,
@@ -29,25 +27,24 @@ var (
     }
 )
 
-type Classify int
-
+const EOF = rune(0)
 const (
-    NodeRoot Classify = iota
-    nodeParam
-    nodeNormal
-    nodeCatchAll
-    nodeEnd
+    NodeRoot = iota
+    NodeParameter
+    NodeNormal
+    NodeCatchAll
+    NodeEnd
 )
 
 type Node struct {
     key      rune
     value    *Route
-    mutex    sync.RWMutex
-    classify Classify
+    lock     Lock
+    classify byte
     children []*Node
 }
 
-func (node *Node) branch(key rune, value *Route, classify ...Classify) *Node {
+func (node *Node) branch(key rune, value *Route, classify ...byte) *Node {
     data := &Node{
         key:   key,
         value: value,
@@ -59,7 +56,7 @@ func (node *Node) branch(key rune, value *Route, classify ...Classify) *Node {
     return data
 }
 
-func (node *Node) findChild(key rune) *Node {
+func (node *Node) child(key rune) *Node {
     for _, value := range node.children {
         if value.key == key {
             return value
@@ -69,31 +66,22 @@ func (node *Node) findChild(key rune) *Node {
 }
 
 func (node *Node) insert(pattern string, value *Route) error {
-    node.mutex.Lock()
-    defer node.mutex.Unlock()
+    node.lock.Lock()
+    defer node.lock.Unlock()
     if node.classify != NodeRoot {
         return fmt.Errorf("insert on non root node")
     }
     if pattern == "" {
         return errors.New("empty pattern is not support")
     }
-    // 47 -> /
     if pattern[0] != 47 {
         return errors.New("path must start with '/'")
     }
-    var level *Node
-    var child *Node
-
+    var level = node
     for index, character := range pattern {
-        if index == 0 {
-            level = node
-        }
-        child = level.findChild(character)
-        switch level.classify {
-        case nodeParam:
-            if index < len(pattern) && character != '/' {
-                continue
-            }
+        var child = level.child(character)
+        if level.classify == NodeParameter && index < len(pattern) && character != '/' {
+            continue
         }
         if child != nil {
             level = child
@@ -101,43 +89,43 @@ func (node *Node) insert(pattern string, value *Route) error {
         }
         switch character {
         case ':':
-            level = level.branch(character, nil, nodeParam)
+            level = level.branch(character, nil, NodeParameter)
         case '*':
-            level = level.branch(character, nil, nodeCatchAll)
+            level = level.branch(character, nil, NodeCatchAll)
         default:
-            level = level.branch(character, nil, nodeNormal)
+            level = level.branch(character, nil, NodeNormal)
         }
     }
-    level.branch(eof, value, nodeEnd)
+    level.branch(EOF, value, NodeEnd)
     return nil
 }
 
-func (node *Node) find(path string) (*Route, error) {
-    node.mutex.RLock()
-    defer node.mutex.RUnlock()
+func (node *Node) find(pattern string) (*Route, error) {
+    node.lock.RLock()
+    defer node.lock.RUnlock()
     if node.classify != NodeRoot {
         return nil, errors.New("non Node search")
     }
     var level *Node
-    var isParam bool
-    for k, ch := range path {
-        if k == 0 {
+    var isParameter bool
+    for index, character := range pattern {
+        if index == 0 {
             level = node
         }
-        c := level.findChild(ch)
-        if isParam {
-            if k < len(path) && ch != '/' {
+        c := level.child(character)
+        if isParameter {
+            if index < len(pattern) && character != '/' {
                 continue
             }
-            isParam = false
+            isParameter = false
         }
-        param := level.findChild(':')
+        param := level.child(':')
         if param != nil {
             level = param
-            isParam = true
+            isParameter = true
             continue
         }
-        catchAll := level.findChild('*')
+        catchAll := level.child('*')
         if catchAll != nil {
             level = catchAll
             break
@@ -149,12 +137,12 @@ func (node *Node) find(path string) (*Route, error) {
         return nil, ErrorRouteNotFound
     }
     if level != nil {
-        end := level.findChild(eof)
+        end := level.child(EOF)
         if end != nil {
             return end.value, nil
         }
-        if slash := level.findChild('/'); slash != nil {
-            end = slash.findChild(eof)
+        if slash := level.child('/'); slash != nil {
+            end = slash.child(EOF)
             if end != nil {
                 return end.value, nil
             }
