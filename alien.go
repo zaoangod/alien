@@ -250,23 +250,30 @@ func (parameter Parameter) Get(key string) string {
     return parameter[key]
 }
 
-// GetParams returrns Route params stored in r.
-func GetParams(r *http.Request) Parameter {
-    c := r.Header.Get(headerName)
-    if c != "" {
-        p := make(Parameter)
-        p.Load(c)
-        return p
+// GetParameter 返回存储在请求中的路由参数
+func GetParameter(request *http.Request) Parameter {
+    value := request.Header.Get(headerName)
+    if value != "" {
+        parameter := make(Parameter)
+        parameter.Load(value)
+        return parameter
     }
     return nil
 }
 
-type router struct {
-    get, post, patch, put, head     *Node
-    connect, options, trace, delete *Node
+type Router struct {
+    put     *Node
+    get     *Node
+    post    *Node
+    head    *Node
+    patch   *Node
+    trace   *Node
+    delete  *Node
+    connect *Node
+    options *Node
 }
 
-func (r *router) addRoute(method, path string, h func(http.ResponseWriter, *http.Request), wares ...func(http.Handler) http.Handler) error {
+func (r *Router) addRoute(method, path string, h func(http.ResponseWriter, *http.Request), wares ...func(http.Handler) http.Handler) error {
     newRoute := &Route{path: path, handler: h}
     if len(wares) > 0 {
         newRoute.middleware = append(newRoute.middleware, wares...)
@@ -321,7 +328,7 @@ func (r *router) addRoute(method, path string, h func(http.ResponseWriter, *http
     return errUnknownMethod
 }
 
-func (r *router) find(method, path string) (*Route, error) {
+func (r *Router) find(method, path string) (*Route, error) {
     switch method {
     case "GET":
         if r.get != nil {
@@ -387,7 +394,7 @@ func (r *router) find(method, path string) (*Route, error) {
 //
 // If you dont specify a name in a catch all Route, then the default name "catch" will be used.
 type Mux struct {
-    *router
+    *Router
     prefix     string
     notFound   http.Handler
     middleware []func(http.Handler) http.Handler
@@ -396,7 +403,7 @@ type Mux struct {
 // New returns a new *Mux instance with default handler for mismatched routes.
 func New() *Mux {
     m := &Mux{}
-    m.router = &router{}
+    m.Router = &Router{}
     m.notFound = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
         http.Error(w, errRouteNotFound.Error(), http.StatusNotFound)
     })
@@ -514,7 +521,7 @@ func (mux *Mux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (mux *Mux) Group(pattern string) *Mux {
     return &Mux{
         prefix:     pattern,
-        router:     mux.router,
+        Router:     mux.Router,
         middleware: mux.middleware,
         notFound:   mux.notFound,
     }

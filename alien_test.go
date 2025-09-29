@@ -144,7 +144,7 @@ func TestRouter_mismatch(t *testing.T) {
 
 func TestRouter_params(t *testing.T) {
     h := func(w http.ResponseWriter, r *http.Request) {
-        p := GetParams(r)
+        p := GetParameter(r)
         fmt.Fprint(w, p)
     }
     sample := []struct {
